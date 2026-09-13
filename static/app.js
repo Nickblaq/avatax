@@ -157,8 +157,8 @@ document.addEventListener('alpine:init', () => {
     // ── Download helpers ─────────────────────────────────────────────
 
     /**
-     * Build a proxy download URL that forces the browser to download
-     * instead of streaming. Uses /dl endpoint with Content-Disposition.
+     * Build a proxy download URL that forces the browser to download.
+     * Uses /dl endpoint with Content-Disposition: attachment.
      */
     proxyDownloadUrl(directUrl, title, ext) {
       if (!directUrl) return '#';
@@ -168,7 +168,6 @@ document.addEventListener('alpine:init', () => {
 
     /**
      * Download a specific format by format_id using /dl/format endpoint.
-     * This uses yt-dlp to resolve the format URL server-side.
      */
     proxyFormatDownload(sourceUrl, formatId, title, ext) {
       if (!sourceUrl || !formatId) return '#';
@@ -177,16 +176,11 @@ document.addEventListener('alpine:init', () => {
     },
 
     /**
-     * Trigger download by creating a temporary link element.
+     * Trigger download by programmatically clicking a proxy download link.
      */
     triggerDownload(directUrl, title, ext) {
       const href = this.proxyDownloadUrl(directUrl, title, ext);
-      const a = document.createElement('a');
-      a.href = href;
-      a.download = (title || 'download') + (ext ? '.' + ext : '');
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
+      window.location.href = href;
     },
 
     /**
@@ -194,12 +188,7 @@ document.addEventListener('alpine:init', () => {
      */
     triggerFormatDownload(sourceUrl, formatId, title, ext) {
       const href = this.proxyFormatDownload(sourceUrl, formatId, title, ext);
-      const a = document.createElement('a');
-      a.href = href;
-      a.download = (title || 'download') + '_' + formatId + (ext ? '.' + ext : '');
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
+      window.location.href = href;
     },
 
     // ── Helpers ──────────────────────────────────────────────────────

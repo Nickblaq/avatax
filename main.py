@@ -183,6 +183,24 @@ async def extract_media_quick(
 
 # ── Proxy Download ───────────────────────────────────────────────────────────
 
+# Shared httpx client — stays alive across requests, avoids connection churn
+_http_client: httpx.AsyncClient | None = None
+
+
+async def _get_http_client() -> httpx.AsyncClient:
+    global _http_client
+    if _http_client is None or _http_client.is_closed:
+        _http_client = httpx.AsyncClient(
+            timeout=httpx.Timeout(120.0, connect=15.0),
+            follow_redirects=True,
+            limits=httpx.Limits(max_connections=10, max_keepalive_connections=5),
+            headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+            },
+        )
+    return _http_client
+
+
 @app.get("/dl", tags=["Download"])
 async def proxy_download(
     url: str = Query(..., description="Direct media file URL to proxy-download"),
@@ -192,7 +210,6 @@ async def proxy_download(
     Proxy-download a file through the server with proper Content-Disposition.
 
     This forces the browser to download instead of streaming.
-    Use this for any direct URL (CDN links from yt-dlp, etc.).
     """
     if not url:
         raise HTTPException(status_code=400, detail="URL is required")
@@ -202,60 +219,63 @@ async def proxy_download(
         parsed = urlparse(url)
         path_part = unquote(parsed.path)
         filename = path_part.split("/")[-1] if "/" in path_part else "download"
-        # Clean filename
         filename = re.sub(r'[<>:"/\\|?*]', '_', filename)
         if not filename or filename == "download":
             filename = "media_download"
 
     try:
-        async with httpx.AsyncClient(
-            timeout=httpx.Timeout(60.0, connect=15.0),
-            follow_redirects=True,
-            limits=httpx.Limits(max_connections=5, max_keepalive_connections=2),
-        ) as client:
-            # Stream the response to avoid loading large files into memory
-            req = client.build_request("GET", url, headers={
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-                "Referer": "/".join(url.split("/")[:3]) + "/",
-            })
-            response = await client.send(req, stream=True)
+        client = await _get_http_client()
 
-            if response.status_code != 200:
-                await response.aclose()
-                raise HTTPException(status_code=response.status_code, detail=f"Upstream returned {response.status_code}")
+        parsed_url = urlparse(url)
+        referer = f"{parsed_url.scheme}://{parsed_url.netloc}/"
 
-            # Determine content type
-            content_type = response.headers.get("content-type", "application/octet-stream")
-            content_length = response.headers.get("content-length")
+        response = await client.get(
+            url,
+            headers={
+                "Referer": referer,
+                "Accept": "*/*",
+                "Accept-Encoding": "identity",
+            },
+        )
 
-            # Build response headers for download
-            headers = {
-                "Content-Disposition": f'attachment; filename="{filename}"',
-                "Content-Type": content_type,
-                "Cache-Control": "no-cache",
-                "X-Content-Type-Options": "nosniff",
-            }
-            if content_length:
-                headers["Content-Length"] = content_length
-
-            async def stream_file():
-                try:
-                    async for chunk in response.aiter_bytes(chunk_size=65536):
-                        yield chunk
-                finally:
-                    await response.aclose()
-
-            return StreamingResponse(
-                stream_file(),
-                status_code=200,
-                headers=headers,
-                media_type=content_type,
+        if response.status_code != 200:
+            raise HTTPException(
+                status_code=response.status_code,
+                detail=f"Upstream returned {response.status_code} for {url[:120]}",
             )
 
-    except httpx.RequestError as e:
-        raise HTTPException(status_code=502, detail=f"Failed to fetch file: {e}")
+        content_type = response.headers.get("content-type", "application/octet-stream")
+        content_length = response.headers.get("content-length")
+
+        # Read full content into memory so StreamingResponse has reliable access
+        content = response.content
+
+        headers = {
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Content-Type": content_type,
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "X-Content-Type-Options": "nosniff",
+            "Pragma": "no-cache",
+        }
+        if content_length:
+            headers["Content-Length"] = content_length
+        else:
+            headers["Content-Length"] = str(len(content))
+
+        async def generate():
+            yield content
+
+        return StreamingResponse(
+            generate(),
+            status_code=200,
+            headers=headers,
+            media_type=content_type,
+        )
+
     except HTTPException:
         raise
+    except httpx.RequestError as e:
+        raise HTTPException(status_code=502, detail=f"Failed to fetch file: {e}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Download failed: {e}")
 
@@ -269,20 +289,41 @@ async def proxy_download_format(
     """
     Download a specific format from a media URL via yt-dlp.
 
-    Uses yt-dlp to resolve the exact format URL then proxies the download
-    with proper Content-Disposition headers.
+    Uses yt-dlp to resolve the exact format URL then proxies the download.
     """
     try:
         from models import ExtractRequest, QualityPreset
         req = ExtractRequest(url=source_url, format_id=format_id, quality=QualityPreset.CUSTOM)
         fmt_url = get_format_url(req, format_id)
         if not fmt_url:
-            raise HTTPException(status_code=404, detail=f"Format '{format_id}' not found")
+            raise HTTPException(status_code=404, detail=f"Format '{format_id}' not found for {source_url}")
         return await proxy_download(url=fmt_url, filename=filename)
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Format download failed: {e}")
+
+
+@app.get("/dl/test", tags=["Download"])
+async def proxy_download_test(
+    url: str = Query(..., description="URL to test fetching"),
+):
+    """
+    Debug endpoint — tests fetching a URL and returns metadata.
+    Use this to verify the proxy can reach a URL before downloading.
+    """
+    try:
+        client = await _get_http_client()
+        response = await client.head(url, follow_redirects=True)
+        return {
+            "status": response.status_code,
+            "content_type": response.headers.get("content-type", "unknown"),
+            "content_length": response.headers.get("content-length", "unknown"),
+            "final_url": str(response.url),
+            "headers": dict(response.headers),
+        }
+    except Exception as e:
+        return {"error": str(e)}
 
 
 # ── Direct Download (legacy) ─────────────────────────────────────────────────
