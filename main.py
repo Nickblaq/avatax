@@ -5,14 +5,18 @@ Built on yt-dlp 2026.08.19+ and FastAPI.
 
 from __future__ import annotations
 
+import asyncio
+import re
 import time
 from contextlib import asynccontextmanager
 from typing import Any
+from urllib.parse import unquote, urlparse
 
+import httpx
 import yt_dlp
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, RedirectResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from models import (
@@ -31,6 +35,7 @@ from extractor import (
     detect_platform,
     extract_media,
     extract_playlist,
+    get_format_url,
 )
 
 # ── App Lifespan ─────────────────────────────────────────────────────────────
@@ -176,14 +181,118 @@ async def extract_media_quick(
         raise HTTPException(status_code=500, detail=f"Extraction failed: {e}")
 
 
-# ── Direct Download ──────────────────────────────────────────────────────────
+# ── Proxy Download ───────────────────────────────────────────────────────────
+
+@app.get("/dl", tags=["Download"])
+async def proxy_download(
+    url: str = Query(..., description="Direct media file URL to proxy-download"),
+    filename: str = Query(default="", description="Suggested filename"),
+):
+    """
+    Proxy-download a file through the server with proper Content-Disposition.
+
+    This forces the browser to download instead of streaming.
+    Use this for any direct URL (CDN links from yt-dlp, etc.).
+    """
+    if not url:
+        raise HTTPException(status_code=400, detail="URL is required")
+
+    # Derive filename from URL if not provided
+    if not filename:
+        parsed = urlparse(url)
+        path_part = unquote(parsed.path)
+        filename = path_part.split("/")[-1] if "/" in path_part else "download"
+        # Clean filename
+        filename = re.sub(r'[<>:"/\\|?*]', '_', filename)
+        if not filename or filename == "download":
+            filename = "media_download"
+
+    try:
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(60.0, connect=15.0),
+            follow_redirects=True,
+            limits=httpx.Limits(max_connections=5, max_keepalive_connections=2),
+        ) as client:
+            # Stream the response to avoid loading large files into memory
+            req = client.build_request("GET", url, headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+                "Referer": "/".join(url.split("/")[:3]) + "/",
+            })
+            response = await client.send(req, stream=True)
+
+            if response.status_code != 200:
+                await response.aclose()
+                raise HTTPException(status_code=response.status_code, detail=f"Upstream returned {response.status_code}")
+
+            # Determine content type
+            content_type = response.headers.get("content-type", "application/octet-stream")
+            content_length = response.headers.get("content-length")
+
+            # Build response headers for download
+            headers = {
+                "Content-Disposition": f'attachment; filename="{filename}"',
+                "Content-Type": content_type,
+                "Cache-Control": "no-cache",
+                "X-Content-Type-Options": "nosniff",
+            }
+            if content_length:
+                headers["Content-Length"] = content_length
+
+            async def stream_file():
+                try:
+                    async for chunk in response.aiter_bytes(chunk_size=65536):
+                        yield chunk
+                finally:
+                    await response.aclose()
+
+            return StreamingResponse(
+                stream_file(),
+                status_code=200,
+                headers=headers,
+                media_type=content_type,
+            )
+
+    except httpx.RequestError as e:
+        raise HTTPException(status_code=502, detail=f"Failed to fetch file: {e}")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Download failed: {e}")
+
+
+@app.get("/dl/format", tags=["Download"])
+async def proxy_download_format(
+    source_url: str = Query(..., description="Original media page URL"),
+    format_id: str = Query(..., description="yt-dlp format ID to download"),
+    filename: str = Query(default="", description="Suggested filename"),
+):
+    """
+    Download a specific format from a media URL via yt-dlp.
+
+    Uses yt-dlp to resolve the exact format URL then proxies the download
+    with proper Content-Disposition headers.
+    """
+    try:
+        from models import ExtractRequest, QualityPreset
+        req = ExtractRequest(url=source_url, format_id=format_id, quality=QualityPreset.CUSTOM)
+        fmt_url = get_format_url(req, format_id)
+        if not fmt_url:
+            raise HTTPException(status_code=404, detail=f"Format '{format_id}' not found")
+        return await proxy_download(url=fmt_url, filename=filename)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Format download failed: {e}")
+
+
+# ── Direct Download (legacy) ─────────────────────────────────────────────────
 
 @app.post("/download", tags=["Download"])
 async def download_media(request: DownloadRequest):
     """
-    Download media and return the direct file URL.
+    Download media and return a proxy download URL.
 
-    The file is saved to a temp location and a redirect URL is provided.
+    Returns a /dl endpoint URL that forces browser download.
     """
     try:
         from models import MediaType, QualityPreset
@@ -196,9 +305,15 @@ async def download_media(request: DownloadRequest):
         result = extract_media(req)
         if not result.success or not result.download_url:
             raise HTTPException(status_code=404, detail="Could not generate download URL")
+
+        # Build proxy URL so browser downloads instead of streams
+        import urllib.parse
+        proxy_url = f"/dl?url={urllib.parse.quote(result.download_url, safe='')}&filename={urllib.parse.quote(result.media.title or 'download', safe='')}"
+
         return {
             "success": True,
             "download_url": result.download_url,
+            "proxy_download_url": proxy_url,
             "title": result.media.title,
             "format": result.media.formats[-1].format_id if result.media.formats else "",
         }
@@ -501,7 +616,9 @@ async def info():
             "extract": "POST /extract — Full media extraction with formats",
             "extract_quick": "GET /extract/url?url=... — Quick extraction via GET",
             "batch": "POST /extract/batch — Extract from multiple URLs",
-            "download": "POST /download — Get direct download URL",
+            "download": "POST /download — Get proxy download URL",
+            "dl": "GET /dl?url=...&filename=... — Proxy download with forced download",
+            "dl_format": "GET /dl/format?source_url=...&format_id=... — Download specific format",
             "download_redirect": "GET /download/redirect?url=... — Redirect to media file",
             "formats": "GET /formats?url=... — List all available formats",
             "audio": "GET /audio?url=... — Extract audio-only streams",

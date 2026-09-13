@@ -596,6 +596,19 @@ body {
   color: var(--text-primary);
 }
 
+.format-row {
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.format-row:hover {
+  background: rgba(108, 92, 231, 0.08) !important;
+}
+
+.format-row:hover td {
+  color: var(--text-primary) !important;
+}
+
 .formats-table .fmt-badge {
   display: inline-block;
   padding: 2px 8px;

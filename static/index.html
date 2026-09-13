@@ -197,10 +197,12 @@
           </div>
         </div>
 
-        <!-- Download Buttons -->
+        <!-- Download Buttons — use proxy /dl endpoint -->
         <div class="download-section">
           <template x-if="$store.forge.result.download_url">
-            <a class="btn-download primary" :href="$store.forge.result.download_url" target="_blank" rel="noopener">
+            <a class="btn-download primary"
+              :href="$store.forge.proxyDownloadUrl($store.forge.result.download_url, $store.forge.result.media.title, '')"
+              :download="$store.forge.result.media.title || 'download'">
               ⬇️ Download
             </a>
           </template>
@@ -211,12 +213,12 @@
           </template>
           <template x-if="$store.forge.result.download_url">
             <button class="btn-download success" @click="$store.forge.copyUrl($store.forge.result.download_url)">
-              📋 Copy URL
+              📋 Copy Direct URL
             </button>
           </template>
         </div>
 
-        <!-- Formats -->
+        <!-- Formats Table — each row is clickable for download -->
         <div class="formats-section" x-show="$store.forge.result.media.formats && $store.forge.result.media.formats.length > 0">
           <button class="formats-toggle" @click="$store.forge.showFormats = !$store.forge.showFormats">
             <span class="arrow" :class="{ open: $store.forge.showFormats }">▶</span>
@@ -232,12 +234,14 @@
                   <th>Resolution</th>
                   <th>Bitrate</th>
                   <th>Size</th>
-                  <th></th>
+                  <th style="text-align:right">Action</th>
                 </tr>
               </thead>
               <tbody>
                 <template x-for="f in $store.forge.result.media.formats.slice().reverse()" :key="f.format_id">
-                  <tr>
+                  <tr class="format-row"
+                      @click="if(f.url) $store.forge.triggerFormatDownload($store.forge.result.media.webpage_url || $store.forge.result.media.original_url, f.format_id, $store.forge.result.media.title, f.ext)"
+                      :style="f.url ? 'cursor:pointer' : 'opacity:0.5'">
                     <td>
                       <span class="fmt-badge" :class="$store.forge.formatType(f)"
                         x-text="$store.forge.formatTypeLabel(f)"></span>
@@ -247,10 +251,15 @@
                     <td x-text="f.resolution || (f.width ? f.width + 'x' + f.height : '—')"></td>
                     <td x-text="$store.forge.formatBitrate(f.tbr || f.abr) || '—'"></td>
                     <td x-text="$store.forge.formatSize(f.filesize) || '—'"></td>
-                    <td>
+                    <td style="text-align:right">
                       <template x-if="f.url">
-                        <button class="btn-download secondary" style="padding:4px 10px; font-size:0.75rem"
-                          @click="$store.forge.copyUrl(f.url)">📋</button>
+                        <a class="btn-download primary"
+                          style="padding:5px 12px; font-size:0.78rem"
+                          :href="$store.forge.proxyFormatDownload($store.forge.result.media.webpage_url || $store.forge.result.media.original_url, f.format_id, $store.forge.result.media.title, f.ext)"
+                          :download="($store.forge.result.media.title || 'download') + '_' + f.format_id + '.' + f.ext"
+                          @click.stop>
+                          ⬇️ Download
+                        </a>
                       </template>
                     </td>
                   </tr>
@@ -333,7 +342,9 @@
                   </template>
                 </div>
                 <template x-if="r.download_url">
-                  <a class="download-url" :href="r.download_url" target="_blank" rel="noopener">⬇️ Download</a>
+                  <a class="download-url"
+                    :href="$store.forge.proxyDownloadUrl(r.download_url, r.media?.title, '')"
+                    :download="r.media?.title || 'download'">⬇️ Download</a>
                 </template>
               </div>
             </template>

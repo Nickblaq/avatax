@@ -236,6 +236,35 @@ def _info_to_media_model(info: dict[str, Any]) -> MediaInfo:
     )
 
 
+# ── Format URL Resolution ───────────────────────────────────────────────────
+
+def get_format_url(request: ExtractRequest, format_id: str) -> str | None:
+    """Resolve the direct URL for a specific format ID."""
+    opts = _build_ydl_opts(request, download=False)
+    opts["format"] = format_id
+
+    with YoutubeDL(opts) as ydl:
+        info = ydl.extract_info(request.url, download=False)
+
+    if info is None:
+        return None
+
+    info_dict = dict(ydl.sanitize_info(info)) if isinstance(info, dict) else dict(info)
+    formats = info_dict.get("formats") or []
+
+    for f in formats:
+        if str(f.get("format_id")) == format_id:
+            return f.get("url")
+
+    # Fallback: try the requested format itself
+    if formats:
+        for f in formats:
+            if str(f.get("format_id")) == format_id:
+                return f.get("url")
+
+    return None
+
+
 # ── Public API Functions ─────────────────────────────────────────────────────
 
 def extract_media(request: ExtractRequest) -> ExtractResponse:
@@ -267,6 +296,13 @@ def extract_media(request: ExtractRequest) -> ExtractResponse:
     # Pick best download URL
     best_format = _select_best_format(media.formats, request.quality)
     download_url = best_format.url if best_format else None
+
+    # Also include proxy-ready download URL per format
+    for fmt in media.formats:
+        if fmt.url:
+            import urllib.parse
+            safe_title = urllib.parse.quote(media.title or "download", safe="")
+            fmt_download_url = f"/dl?url={urllib.parse.quote(fmt.url, safe='')}&filename={safe_title}.{fmt.ext}"
 
     return ExtractResponse(
         success=True,

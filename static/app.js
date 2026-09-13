@@ -154,6 +154,54 @@ document.addEventListener('alpine:init', () => {
       }
     },
 
+    // ── Download helpers ─────────────────────────────────────────────
+
+    /**
+     * Build a proxy download URL that forces the browser to download
+     * instead of streaming. Uses /dl endpoint with Content-Disposition.
+     */
+    proxyDownloadUrl(directUrl, title, ext) {
+      if (!directUrl) return '#';
+      const filename = (title || 'download') + (ext ? '.' + ext : '');
+      return this.api(`/dl?url=${encodeURIComponent(directUrl)}&filename=${encodeURIComponent(filename)}`);
+    },
+
+    /**
+     * Download a specific format by format_id using /dl/format endpoint.
+     * This uses yt-dlp to resolve the format URL server-side.
+     */
+    proxyFormatDownload(sourceUrl, formatId, title, ext) {
+      if (!sourceUrl || !formatId) return '#';
+      const filename = (title || 'download') + (ext ? '.' + ext : '');
+      return this.api(`/dl/format?source_url=${encodeURIComponent(sourceUrl)}&format_id=${encodeURIComponent(formatId)}&filename=${encodeURIComponent(filename)}`);
+    },
+
+    /**
+     * Trigger download by creating a temporary link element.
+     */
+    triggerDownload(directUrl, title, ext) {
+      const href = this.proxyDownloadUrl(directUrl, title, ext);
+      const a = document.createElement('a');
+      a.href = href;
+      a.download = (title || 'download') + (ext ? '.' + ext : '');
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    },
+
+    /**
+     * Trigger format-specific download.
+     */
+    triggerFormatDownload(sourceUrl, formatId, title, ext) {
+      const href = this.proxyFormatDownload(sourceUrl, formatId, title, ext);
+      const a = document.createElement('a');
+      a.href = href;
+      a.download = (title || 'download') + '_' + formatId + (ext ? '.' + ext : '');
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    },
+
     // ── Helpers ──────────────────────────────────────────────────────
     formatDuration(seconds) {
       if (!seconds) return '';
