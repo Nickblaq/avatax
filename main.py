@@ -5,18 +5,21 @@ Built on yt-dlp 2026.08.19+ and FastAPI.
 
 from __future__ import annotations
 
-import asyncio
+import os
 import re
+import shutil
+import tempfile
 import time
+import uuid
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any
 from urllib.parse import unquote, urlparse
 
-import httpx
 import yt_dlp
-from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from models import (
@@ -35,8 +38,24 @@ from extractor import (
     detect_platform,
     extract_media,
     extract_playlist,
-    get_format_url,
 )
+
+# ── Temp Download Directory ──────────────────────────────────────────────────
+
+DOWNLOAD_DIR = Path(tempfile.gettempdir()) / "mediaforge_downloads"
+DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _cleanup_old_files(max_age_seconds: int = 600):
+    """Remove downloaded files older than max_age_seconds."""
+    now = time.time()
+    for f in DOWNLOAD_DIR.iterdir():
+        if f.is_file() and (now - f.stat().st_mtime) > max_age_seconds:
+            try:
+                f.unlink()
+            except OSError:
+                pass
+
 
 # ── App Lifespan ─────────────────────────────────────────────────────────────
 
@@ -47,6 +66,7 @@ _start_time: float = 0.0
 async def lifespan(app: FastAPI):
     global _start_time
     _start_time = time.time()
+    _cleanup_old_files()
     yield
 
 
@@ -181,211 +201,208 @@ async def extract_media_quick(
         raise HTTPException(status_code=500, detail=f"Extraction failed: {e}")
 
 
-# ── Proxy Download ───────────────────────────────────────────────────────────
+# ── Download via yt-dlp ──────────────────────────────────────────────────────
 
-# Shared httpx client — stays alive across requests, avoids connection churn
-_http_client: httpx.AsyncClient | None = None
+def _ydl_opts_for_download(
+    url: str,
+    quality: str = "best",
+    format_id: str | None = None,
+    outtmpl: str | None = None,
+) -> dict[str, Any]:
+    """Build yt-dlp options for actual file download."""
+    fmt = "bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best"
+    if quality == "good":
+        fmt = "best[height<=720][ext=mp4]/best[height<=720]/best"
+    elif quality == "worst":
+        fmt = "worst[ext=mp4]/worst"
+    elif quality == "audio_only":
+        fmt = "bestaudio[ext=m4a]/bestaudio/best"
+    elif quality == "custom" and format_id:
+        fmt = format_id
 
-
-async def _get_http_client() -> httpx.AsyncClient:
-    global _http_client
-    if _http_client is None or _http_client.is_closed:
-        _http_client = httpx.AsyncClient(
-            timeout=httpx.Timeout(120.0, connect=15.0),
-            follow_redirects=True,
-            limits=httpx.Limits(max_connections=10, max_keepalive_connections=5),
-            headers={
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    return {
+        "quiet": True,
+        "no_warnings": True,
+        "format": fmt,
+        "skip_download": False,
+        "outtmpl": outtmpl or str(DOWNLOAD_DIR / "%(id)s.%(ext)s"),
+        "ignoreerrors": "only_download",
+        "no_color": True,
+        "geo_bypass": True,
+        "socket_timeout": 60,
+        "retries": 3,
+        "fragment_retries": 3,
+        "extractor_retries": 3,
+        "extractor_args": {
+            "youtube": {
+                "player_client": ["web", "web_embedded", "mweb"],
             },
-        )
-    return _http_client
+        },
+        # Merge video+audio with ffmpeg when needed
+        "merge_output_format": "mp4",
+    }
+
+
+def _download_with_ytdlp(
+    url: str,
+    quality: str = "best",
+    format_id: str | None = None,
+) -> Path | None:
+    """Download media using yt-dlp. Returns the path to the downloaded file."""
+    # Use a unique ID to avoid collisions
+    unique_id = uuid.uuid4().hex[:12]
+    outtmpl = str(DOWNLOAD_DIR / f"{unique_id}.%(ext)s")
+
+    opts = _ydl_opts_for_download(url, quality, format_id, outtmpl)
+
+    try:
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(url, download=True)
+    except Exception:
+        return None
+
+    if info is None:
+        return None
+
+    # Find the downloaded file
+    # yt-dlp may have merged formats, so look for the final output
+    info_dict = dict(ydl.sanitize_info(info)) if isinstance(info, dict) else dict(info)
+
+    # Try to find the file by the output template
+    requested_downloads = info_dict.get("_filename") or info_dict.get("filename")
+    if requested_downloads and os.path.exists(requested_downloads):
+        return Path(requested_downloads)
+
+    # Fallback: search for files matching the unique ID
+    for f in DOWNLOAD_DIR.iterdir():
+        if f.is_file() and f.stem.startswith(unique_id):
+            return f
+
+    # Second fallback: find most recent file
+    files = sorted(DOWNLOAD_DIR.glob(f"{unique_id}.*"), key=lambda p: p.stat().st_mtime, reverse=True)
+    if files:
+        return files[0]
+
+    return None
 
 
 @app.get("/dl", tags=["Download"])
-async def proxy_download(
-    url: str = Query(..., description="Direct media file URL to proxy-download"),
+async def download_media_ytdlp(
+    url: str = Query(..., description="Original media page URL to download from"),
+    quality: str = Query("best", description="Quality: best, good, worst, audio_only"),
+    format_id: str | None = Query(default=None, description="Specific yt-dlp format ID"),
     filename: str = Query(default="", description="Suggested filename"),
 ):
     """
-    Proxy-download a file through the server with proper Content-Disposition.
+    Download media using yt-dlp and serve the file.
 
-    This forces the browser to download instead of streaming.
+    This is the REAL download — yt-dlp handles HLS, auth, cookies,
+    format merging, and all platform-specific logic.
     """
     if not url:
         raise HTTPException(status_code=400, detail="URL is required")
 
-    # Derive filename from URL if not provided
-    if not filename:
-        parsed = urlparse(url)
-        path_part = unquote(parsed.path)
-        filename = path_part.split("/")[-1] if "/" in path_part else "download"
-        filename = re.sub(r'[<>:"/\\|?*]', '_', filename)
-        if not filename or filename == "download":
-            filename = "media_download"
+    # Clean up old files periodically
+    _cleanup_old_files()
 
     try:
-        client = await _get_http_client()
+        file_path = _download_with_ytdlp(url, quality, format_id)
+    except yt_dlp.utils.DownloadError as e:
+        raise HTTPException(status_code=422, detail=f"Download failed: {e}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Download error: {e}")
 
-        parsed_url = urlparse(url)
-        referer = f"{parsed_url.scheme}://{parsed_url.netloc}/"
+    if file_path is None or not file_path.exists():
+        raise HTTPException(status_code=500, detail="yt-dlp could not download the file")
 
-        response = await client.get(
-            url,
-            headers={
-                "Referer": referer,
-                "Accept": "*/*",
-                "Accept-Encoding": "identity",
-            },
-        )
+    file_size = file_path.stat().st_size
+    if file_size == 0:
+        file_path.unlink(missing_ok=True)
+        raise HTTPException(status_code=500, detail="Downloaded file is empty")
 
-        if response.status_code != 200:
-            raise HTTPException(
-                status_code=response.status_code,
-                detail=f"Upstream returned {response.status_code} for {url[:120]}",
-            )
+    # Determine content type from extension
+    ext = file_path.suffix.lower()
+    content_type_map = {
+        ".mp4": "video/mp4",
+        ".webm": "video/webm",
+        ".mkv": "video/x-matroska",
+        ".avi": "video/x-msvideo",
+        ".mov": "video/quicktime",
+        ".m4a": "audio/mp4",
+        ".mp3": "audio/mpeg",
+        ".opus": "audio/opus",
+        ".ogg": "audio/ogg",
+        ".wav": "audio/wav",
+        ".flac": "audio/flac",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".png": "image/png",
+        ".gif": "image/gif",
+        ".webp": "image/webp",
+    }
+    content_type = content_type_map.get(ext, "application/octet-stream")
 
-        content_type = response.headers.get("content-type", "application/octet-stream")
-        content_length = response.headers.get("content-length")
+    # Build filename for download
+    if not filename:
+        # Try to get title from info dict, fallback to file stem
+        filename = file_path.stem
+        # Clean the filename
+        filename = re.sub(r'[<>:"/\\|?*]', '_', filename)
+        if len(filename) < 3:
+            filename = "media_download"
+    download_name = f"{filename}{ext}"
 
-        # Read full content into memory so StreamingResponse has reliable access
-        content = response.content
-
-        headers = {
-            "Content-Disposition": f'attachment; filename="{filename}"',
-            "Content-Type": content_type,
+    return FileResponse(
+        path=str(file_path),
+        media_type=content_type,
+        filename=download_name,
+        headers={
             "Cache-Control": "no-cache, no-store, must-revalidate",
             "X-Content-Type-Options": "nosniff",
-            "Pragma": "no-cache",
-        }
-        if content_length:
-            headers["Content-Length"] = content_length
-        else:
-            headers["Content-Length"] = str(len(content))
-
-        async def generate():
-            yield content
-
-        return StreamingResponse(
-            generate(),
-            status_code=200,
-            headers=headers,
-            media_type=content_type,
-        )
-
-    except HTTPException:
-        raise
-    except httpx.RequestError as e:
-        raise HTTPException(status_code=502, detail=f"Failed to fetch file: {e}")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Download failed: {e}")
-
-
-@app.get("/dl/format", tags=["Download"])
-async def proxy_download_format(
-    source_url: str = Query(..., description="Original media page URL"),
-    format_id: str = Query(..., description="yt-dlp format ID to download"),
-    filename: str = Query(default="", description="Suggested filename"),
-):
-    """
-    Download a specific format from a media URL via yt-dlp.
-
-    Uses yt-dlp to resolve the exact format URL then proxies the download.
-    """
-    try:
-        from models import ExtractRequest, QualityPreset
-        req = ExtractRequest(url=source_url, format_id=format_id, quality=QualityPreset.CUSTOM)
-        fmt_url = get_format_url(req, format_id)
-        if not fmt_url:
-            raise HTTPException(status_code=404, detail=f"Format '{format_id}' not found for {source_url}")
-        return await proxy_download(url=fmt_url, filename=filename)
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Format download failed: {e}")
+        },
+    )
 
 
 @app.get("/dl/test", tags=["Download"])
-async def proxy_download_test(
-    url: str = Query(..., description="URL to test fetching"),
+async def download_test(
+    url: str = Query(..., description="URL to test"),
 ):
-    """
-    Debug endpoint — tests fetching a URL and returns metadata.
-    Use this to verify the proxy can reach a URL before downloading.
-    """
+    """Debug: test yt-dlp extraction on a URL."""
     try:
-        client = await _get_http_client()
-        response = await client.head(url, follow_redirects=True)
+        opts = {
+            "quiet": True,
+            "no_warnings": True,
+            "skip_download": True,
+            "no_color": True,
+            "geo_bypass": True,
+        }
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+        if info is None:
+            return {"error": "No info returned"}
+        info = dict(ydl.sanitize_info(info))
+        formats = info.get("formats", [])
         return {
-            "status": response.status_code,
-            "content_type": response.headers.get("content-type", "unknown"),
-            "content_length": response.headers.get("content-length", "unknown"),
-            "final_url": str(response.url),
-            "headers": dict(response.headers),
+            "title": info.get("title"),
+            "id": info.get("id"),
+            "ext": info.get("ext"),
+            "format_id": info.get("format_id"),
+            "formats_count": len(formats),
+            "formats": [
+                {
+                    "format_id": f.get("format_id"),
+                    "ext": f.get("ext"),
+                    "resolution": f.get("resolution"),
+                    "vcodec": f.get("vcodec"),
+                    "acodec": f.get("acodec"),
+                    "filesize": f.get("filesize"),
+                    "url_preview": (f.get("url") or "")[:100],
+                }
+                for f in formats[:5]
+            ],
         }
     except Exception as e:
         return {"error": str(e)}
-
-
-# ── Direct Download (legacy) ─────────────────────────────────────────────────
-
-@app.post("/download", tags=["Download"])
-async def download_media(request: DownloadRequest):
-    """
-    Download media and return a proxy download URL.
-
-    Returns a /dl endpoint URL that forces browser download.
-    """
-    try:
-        from models import MediaType, QualityPreset
-        req = ExtractRequest(
-            url=request.url,
-            media_type=request.media_type,
-            quality=request.quality,
-            format_id=request.format_id,
-        )
-        result = extract_media(req)
-        if not result.success or not result.download_url:
-            raise HTTPException(status_code=404, detail="Could not generate download URL")
-
-        # Build proxy URL so browser downloads instead of streams
-        import urllib.parse
-        proxy_url = f"/dl?url={urllib.parse.quote(result.download_url, safe='')}&filename={urllib.parse.quote(result.media.title or 'download', safe='')}"
-
-        return {
-            "success": True,
-            "download_url": result.download_url,
-            "proxy_download_url": proxy_url,
-            "title": result.media.title,
-            "format": result.media.formats[-1].format_id if result.media.formats else "",
-        }
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Download failed: {e}")
-
-
-@app.get("/download/redirect", tags=["Download"])
-async def download_redirect(
-    url: str = Query(..., description="Media URL"),
-    quality: str = Query("best", description="Quality preset"),
-):
-    """
-    Direct redirect to the best-quality media file.
-
-    Returns a 307 redirect to the actual video/audio URL.
-    Useful for embedding or direct playback.
-    """
-    try:
-        from models import ExtractRequest
-        req = ExtractRequest(url=url, quality=quality)  # type: ignore[arg-type]
-        result = extract_media(req)
-        if not result.success or not result.download_url:
-            raise HTTPException(status_code=404, detail="No direct URL available for this media")
-        return RedirectResponse(url=result.download_url, status_code=307)
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
 
 
 # ── Format Listing ───────────────────────────────────────────────────────────
@@ -442,7 +459,6 @@ async def extract_audio(
 
         audio_formats = [f for f in result.media.formats if f.has_audio]
 
-        # Filter by preferred codec if specified
         if codec != "best" and audio_formats:
             codec_map = {
                 "mp3": ["mp3", "mp3a"],
@@ -481,11 +497,7 @@ async def extract_thumbnail(
     url: str = Query(..., description="Media URL"),
     index: int = Query(0, description="Thumbnail index (0 = best)"),
 ):
-    """
-    Extract thumbnails for a media URL.
-
-    Returns all available thumbnails with their URLs and dimensions.
-    """
+    """Extract thumbnails for a media URL."""
     try:
         from models import ExtractRequest
         req = ExtractRequest(url=url)
@@ -517,9 +529,7 @@ async def extract_subtitles(
     url: str = Query(..., description="Media URL"),
     lang: str = Query("en", description="Language code (en, es, fr, etc.)"),
 ):
-    """
-    Extract available subtitles and auto-captions for a media URL.
-    """
+    """Extract available subtitles and auto-captions for a media URL."""
     try:
         from models import ExtractRequest
         req = ExtractRequest(url=url, include_subtitles=True)
@@ -530,7 +540,6 @@ async def extract_subtitles(
         subtitles = result.media.subtitles
         auto_captions = result.media.auto_captions
 
-        # Find requested language
         sub_entry = subtitles.get(lang, subtitles.get("en", []))
         auto_entry = auto_captions.get(lang, auto_captions.get("en", []))
 
@@ -555,11 +564,7 @@ async def extract_subtitles(
 
 @app.post("/playlist", response_model=PlaylistResponse, tags=["Playlist"])
 async def extract_playlist_endpoint(request: PlaylistRequest):
-    """
-    Extract playlist metadata and items.
-
-    Returns playlist info with all video entries.
-    """
+    """Extract playlist metadata and items."""
     try:
         return extract_playlist(request)
     except Exception as e:
@@ -585,11 +590,7 @@ async def extract_playlist_quick(
 async def extract_metadata(
     url: str = Query(..., description="Media URL"),
 ):
-    """
-    Extract only metadata (title, description, stats) without format info.
-
-    Faster than /extract when you only need metadata.
-    """
+    """Extract only metadata without format info."""
     try:
         from models import ExtractRequest
         req = ExtractRequest(url=url)
@@ -657,10 +658,8 @@ async def info():
             "extract": "POST /extract — Full media extraction with formats",
             "extract_quick": "GET /extract/url?url=... — Quick extraction via GET",
             "batch": "POST /extract/batch — Extract from multiple URLs",
-            "download": "POST /download — Get proxy download URL",
-            "dl": "GET /dl?url=...&filename=... — Proxy download with forced download",
-            "dl_format": "GET /dl/format?source_url=...&format_id=... — Download specific format",
-            "download_redirect": "GET /download/redirect?url=... — Redirect to media file",
+            "dl": "GET /dl?url=...&quality=... — Download via yt-dlp + serve file",
+            "dl_test": "GET /dl/test?url=... — Debug: test extraction",
             "formats": "GET /formats?url=... — List all available formats",
             "audio": "GET /audio?url=... — Extract audio-only streams",
             "thumbnail": "GET /thumbnail?url=... — Extract thumbnails",

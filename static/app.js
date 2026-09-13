@@ -9,6 +9,7 @@ document.addEventListener('alpine:init', () => {
     quality: 'best',
     mediaType: 'all',
     loading: false,
+    downloading: false,
     error: null,
     result: null,
     batchResults: null,
@@ -157,38 +158,31 @@ document.addEventListener('alpine:init', () => {
     // ── Download helpers ─────────────────────────────────────────────
 
     /**
-     * Build a proxy download URL that forces the browser to download.
-     * Uses /dl endpoint with Content-Disposition: attachment.
+     * Build download URL that triggers yt-dlp download on the server.
+     * The /dl endpoint takes the ORIGINAL source URL (not CDN URL)
+     * and uses yt-dlp to handle HLS, auth, format merging, etc.
      */
-    proxyDownloadUrl(directUrl, title, ext) {
-      if (!directUrl) return '#';
-      const filename = (title || 'download') + (ext ? '.' + ext : '');
-      return this.api(`/dl?url=${encodeURIComponent(directUrl)}&filename=${encodeURIComponent(filename)}`);
+    dlUrl(sourceUrl, quality, formatId) {
+      if (!sourceUrl) return '#';
+      let href = this.api(`/dl?url=${encodeURIComponent(sourceUrl)}&quality=${encodeURIComponent(quality || 'best')}`);
+      if (formatId) {
+        href += `&format_id=${encodeURIComponent(formatId)}`;
+      }
+      return href;
     },
 
     /**
-     * Download a specific format by format_id using /dl/format endpoint.
+     * Trigger download via the yt-dlp backend endpoint.
+     * Uses window.location to navigate to the /dl endpoint,
+     * which returns a FileResponse with Content-Disposition: attachment.
      */
-    proxyFormatDownload(sourceUrl, formatId, title, ext) {
-      if (!sourceUrl || !formatId) return '#';
-      const filename = (title || 'download') + (ext ? '.' + ext : '');
-      return this.api(`/dl/format?source_url=${encodeURIComponent(sourceUrl)}&format_id=${encodeURIComponent(formatId)}&filename=${encodeURIComponent(filename)}`);
-    },
-
-    /**
-     * Trigger download by programmatically clicking a proxy download link.
-     */
-    triggerDownload(directUrl, title, ext) {
-      const href = this.proxyDownloadUrl(directUrl, title, ext);
+    triggerDownload(sourceUrl, quality, formatId) {
+      if (!sourceUrl) return;
+      this.downloading = true;
+      const href = this.dlUrl(sourceUrl, quality || this.quality, formatId);
       window.location.href = href;
-    },
-
-    /**
-     * Trigger format-specific download.
-     */
-    triggerFormatDownload(sourceUrl, formatId, title, ext) {
-      const href = this.proxyFormatDownload(sourceUrl, formatId, title, ext);
-      window.location.href = href;
+      // Reset downloading state after a delay (file download starts)
+      setTimeout(() => { this.downloading = false; }, 5000);
     },
 
     // ── Helpers ──────────────────────────────────────────────────────
