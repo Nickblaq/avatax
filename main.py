@@ -209,18 +209,37 @@ def _ydl_opts_for_download(
     format_id: str | None = None,
     outtmpl: str | None = None,
 ) -> dict[str, Any]:
-    """Build yt-dlp options for actual file download."""
-    fmt = "bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best"
-    if quality == "good":
+    """Build yt-dlp options for actual file download.
+
+    Per yt-dlp docs:
+    - When selecting a specific format_id, always merge with +bestaudio
+      so the result has both video and audio tracks.
+    - For audio-only, use FFmpegExtractAudio postprocessor to output mp3.
+    """
+    postprocessors = []
+
+    if quality == "custom" and format_id:
+        # Specific format selected from the list.
+        # Always append +bestaudio to ensure audio is merged.
+        fmt = f"{format_id}+bestaudio/bestvideo+bestaudio/best"
+    elif quality == "audio_only":
+        fmt = "bestaudio[ext=m4a]/bestaudio/best"
+        # Convert to mp3 using FFmpegExtractAudio per yt-dlp docs:
+        # https://github.com/yt-dlp/yt-dlp#postprocessors
+        postprocessors.append({
+            "key": "FFmpegExtractAudio",
+            "preferredcodec": "mp3",
+            "preferredquality": "192",
+        })
+    elif quality == "good":
         fmt = "best[height<=720][ext=mp4]/best[height<=720]/best"
     elif quality == "worst":
         fmt = "worst[ext=mp4]/worst"
-    elif quality == "audio_only":
-        fmt = "bestaudio[ext=m4a]/bestaudio/best"
-    elif quality == "custom" and format_id:
-        fmt = format_id
+    else:
+        # Default "best": merge best video + best audio into mp4
+        fmt = "bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best"
 
-    return {
+    opts: dict[str, Any] = {
         "quiet": True,
         "no_warnings": True,
         "format": fmt,
@@ -242,8 +261,15 @@ def _ydl_opts_for_download(
             },
         },
         "age_limit": None,
-        "merge_output_format": "mp4",
+        "postprocessors": postprocessors,
     }
+
+    # Only set merge_output_format when NOT doing audio extraction
+    # (FFmpegExtractAudio handles its own output format)
+    if not postprocessors:
+        opts["merge_output_format"] = "mp4"
+
+    return opts
 
 
 def _download_with_ytdlp(
