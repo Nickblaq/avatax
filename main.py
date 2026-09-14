@@ -39,6 +39,7 @@ from extractor import (
     extract_media,
     extract_playlist,
 )
+from routes.ffmpeg_routes import router as ffmpeg_router, cleanup_ffmpeg_files
 
 # ── Temp Download Directory & File Tracker ─────────────────────────────────
 
@@ -112,6 +113,12 @@ def _cleanup_old_files():
     if removed > 0:
         _save_tracker(tracker)
 
+    # Also clean FFmpeg processed files
+    try:
+        cleanup_ffmpeg_files()
+    except Exception:
+        pass
+
 
 async def _cleanup_loop():
     """Background loop that cleans up old files every minute."""
@@ -133,6 +140,7 @@ async def lifespan(app: FastAPI):
     global _start_time
     _start_time = time.time()
     _cleanup_old_files()  # clean on startup
+    cleanup_ffmpeg_files()  # clean FFmpeg files on startup
     task = asyncio.create_task(_cleanup_loop())  # start background cleanup
     yield
     task.cancel()  # stop cleanup on shutdown
@@ -161,6 +169,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Mount FFmpeg processing routes
+app.include_router(ffmpeg_router)
 
 
 # ── Error Handlers ───────────────────────────────────────────────────────────
@@ -781,6 +792,23 @@ async def info():
             "metadata": "GET /metadata?url=... — Metadata only (fast)",
             "detect": "GET /detect?url=... — Detect platform from URL",
             "platforms": "GET /platforms — List supported platforms",
+            "ffmpeg_features": "GET /ffmpeg/features — Check FFmpeg availability",
+            "ffmpeg_trim": "POST /ffmpeg/trim — Trim/cut media",
+            "ffmpeg_concatenate": "POST /ffmpeg/concatenate — Join multiple files",
+            "ffmpeg_resize": "POST /ffmpeg/resize — Resize video/image",
+            "ffmpeg_aspect_ratio": "POST /ffmpeg/aspect-ratio — Change aspect ratio",
+            "ffmpeg_compress": "POST /ffmpeg/compress — Compress media",
+            "ffmpeg_extract_audio": "POST /ffmpeg/extract-audio — Extract audio",
+            "ffmpeg_add_audio": "POST /ffmpeg/add-audio — Add audio to video",
+            "ffmpeg_rotate": "POST /ffmpeg/rotate — Rotate media",
+            "ffmpeg_flip": "POST /ffmpeg/flip — Flip/mirror media",
+            "ffmpeg_speed": "POST /ffmpeg/speed — Change playback speed",
+            "ffmpeg_crop": "POST /ffmpeg/crop — Crop video/image",
+            "ffmpeg_watermark": "POST /ffmpeg/watermark — Add watermark",
+            "ffmpeg_convert": "POST /ffmpeg/convert — Convert format",
+            "ffmpeg_thumbnail": "POST /ffmpeg/thumbnail — Extract thumbnail",
+            "ffmpeg_subtitles": "POST /ffmpeg/subtitles — Burn subtitles",
+            "ffmpeg_probe": "POST /ffmpeg/probe — Probe media file",
         },
         "quality_presets": ["best", "good", "worst", "audio_only", "custom"],
         "supported_media_types": ["video", "audio", "image", "all"],
