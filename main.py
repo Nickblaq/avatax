@@ -40,21 +40,87 @@ from extractor import (
     extract_playlist,
 )
 
-# ── Temp Download Directory ──────────────────────────────────────────────────
+# ── Temp Download Directory & File Tracker ─────────────────────────────────
+
+import json
+import asyncio
 
 DOWNLOAD_DIR = Path(tempfile.gettempdir()) / "mediaforge_downloads"
 DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
+TRACKER_FILE = DOWNLOAD_DIR / ".tracker.json"
+MAX_FILE_AGE_SECONDS = 15 * 60  # 15 minutes
+CLEANUP_INTERVAL_SECONDS = 60   # check every minute
 
-def _cleanup_old_files(max_age_seconds: int = 600):
-    """Remove downloaded files older than max_age_seconds."""
+
+def _load_tracker() -> dict:
+    """Load the file tracker JSON."""
+    if TRACKER_FILE.exists():
+        try:
+            return json.loads(TRACKER_FILE.read_text())
+        except (json.JSONDecodeError, OSError):
+            return {}
+    return {}
+
+
+def _save_tracker(data: dict):
+    """Save the file tracker JSON."""
+    try:
+        TRACKER_FILE.write_text(json.dumps(data))
+    except OSError:
+        pass
+
+
+def _track_file(file_path: Path):
+    """Register a file for tracking."""
+    tracker = _load_tracker()
+    tracker[str(file_path)] = {
+        "created_at": time.time(),
+        "filename": file_path.name,
+    }
+    _save_tracker(tracker)
+
+
+def _cleanup_old_files():
+    """Remove tracked files older than MAX_FILE_AGE_SECONDS."""
     now = time.time()
+    tracker = _load_tracker()
+    to_remove = []
+
+    for fpath_str, meta in tracker.items():
+        created = meta.get("created_at", 0)
+        if (now - created) > MAX_FILE_AGE_SECONDS:
+            to_remove.append(fpath_str)
+
+    # Also sweep for untracked files older than the limit
     for f in DOWNLOAD_DIR.iterdir():
-        if f.is_file() and (now - f.stat().st_mtime) > max_age_seconds:
+        if f.is_file() and f.name != ".tracker.json":
+            if (now - f.stat().st_mtime) > MAX_FILE_AGE_SECONDS:
+                to_remove.append(str(f))
+
+    removed = 0
+    for fpath_str in set(to_remove):
+        p = Path(fpath_str)
+        if p.exists():
             try:
-                f.unlink()
+                p.unlink()
+                removed += 1
             except OSError:
                 pass
+        tracker.pop(fpath_str, None)
+
+    if removed > 0:
+        _save_tracker(tracker)
+
+
+async def _cleanup_loop():
+    """Background loop that cleans up old files every minute."""
+    while True:
+        await asyncio.sleep(CLEANUP_INTERVAL_SECONDS)
+        try:
+            _cleanup_old_files()
+        except Exception:
+            pass
 
 
 # ── App Lifespan ─────────────────────────────────────────────────────────────
@@ -66,8 +132,10 @@ _start_time: float = 0.0
 async def lifespan(app: FastAPI):
     global _start_time
     _start_time = time.time()
-    _cleanup_old_files()
+    _cleanup_old_files()  # clean on startup
+    task = asyncio.create_task(_cleanup_loop())  # start background cleanup
     yield
+    task.cancel()  # stop cleanup on shutdown
 
 
 # ── FastAPI App ──────────────────────────────────────────────────────────────
@@ -300,16 +368,20 @@ def _download_with_ytdlp(
     # Try to find the file by the output template
     requested_downloads = info_dict.get("_filename") or info_dict.get("filename")
     if requested_downloads and os.path.exists(requested_downloads):
-        return Path(requested_downloads)
+        result_path = Path(requested_downloads)
+        _track_file(result_path)
+        return result_path
 
     # Fallback: search for files matching the unique ID
     for f in DOWNLOAD_DIR.iterdir():
         if f.is_file() and f.stem.startswith(unique_id):
+            _track_file(f)
             return f
 
     # Second fallback: find most recent file
     files = sorted(DOWNLOAD_DIR.glob(f"{unique_id}.*"), key=lambda p: p.stat().st_mtime, reverse=True)
     if files:
+        _track_file(files[0])
         return files[0]
 
     return None
