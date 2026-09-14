@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MediaForge — Instagram</title>
+  <link rel="stylesheet" href="/static/style.css" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📸</text></svg>" />
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+</head>
+<body x-data="instagramPage()">
+  <div class="container">
+
+    <nav class="nav-bar">
+      <a href="/" class="nav-home">⚡</a>
+      <a href="/twitter">🐦 Twitter</a>
+      <a href="/instagram" class="active">📸 Instagram</a>
+    </nav>
+
+    <section class="hero">
+      <h1>📸 Instagram Extractor</h1>
+      <p>Extract reels, stories, posts, images & video from Instagram</p>
+    </section>
+
+    <!-- URL Input -->
+    <div class="url-input-group">
+      <input type="text" x-model="url" @input.debounce.300ms="validateUrl()" @keydown.enter="extract()" placeholder="Paste an Instagram post, reel or story URL…" />
+      <button class="btn-extract" @click="extract()" :disabled="loading || !url.trim()">
+        <span class="spinner" x-show="loading"></span>
+        <span x-text="loading ? 'Extracting…' : 'Extract'"></span>
+      </button>
+    </div>
+
+    <!-- Platform validation feedback -->
+    <template x-if="url.trim() && !isValidUrl && url.length > 15">
+      <div class="status-bar error" style="margin-top:8px">
+        ⚠️ Please enter a valid Instagram URL (instagram.com)
+      </div>
+    </template>
+
+    <!-- Options -->
+    <div class="options-row">
+      <div class="select-wrap">
+        <select x-model="quality">
+          <option value="best">🏆 Best</option>
+          <option value="good">👍 720p</option>
+          <option value="worst">💾 Smallest</option>
+          <option value="audio_only">🎵 Audio Only</option>
+        </select>
+      </div>
+      <span class="platform-tag">📸 Instagram</span>
+    </div>
+
+    <!-- Error -->
+    <template x-if="error">
+      <div class="status-bar error" x-text="error" style="margin-top:8px"></div>
+    </template>
+
+    <!-- Result -->
+    <template x-if="result && !error">
+      <div class="result-card" style="margin-top:12px">
+        <!-- Header -->
+        <div class="result-header">
+          <img class="result-thumbnail" :src="result.media.thumbnail || ''" :alt="result.media.title" @error="$event.target.style.display='none'" />
+          <div class="result-meta">
+            <h3 x-text="result.media.title || 'Untitled'"></h3>
+            <div class="uploader" x-text="result.media.uploader || ''"></div>
+            <div class="meta-row">
+              <span class="meta-tag">📸 Instagram</span>
+              <template x-if="result.media.duration_string">
+                <span class="meta-tag" x-text="'⏱ ' + result.media.duration_string"></span>
+              </template>
+              <template x-if="result.media.view_count != null">
+                <span class="meta-tag" x-text="fmtNum(result.media.view_count) + ' views'"></span>
+              </template>
+              <template x-if="result.media.like_count != null">
+                <span class="meta-tag" x-text="'❤ ' + fmtNum(result.media.like_count)"></span>
+              </template>
+            </div>
+          </div>
+        </div>
+
+        <!-- Download -->
+        <div class="download-section">
+          <template x-if="result.media.webpage_url || result.media.original_url">
+            <a class="btn-download primary" :href="dlUrl(result.media.webpage_url || result.media.original_url, quality)">⬇ Download</a>
+          </template>
+          <template x-if="result.media.webpage_url">
+            <a class="btn-download secondary" :href="result.media.webpage_url" target="_blank">🔗 Open Post</a>
+          </template>
+          <template x-if="result.download_url">
+            <button class="btn-download success" @click="copyUrl(result.download_url)">📋 Copy URL</button>
+          </template>
+        </div>
+
+        <!-- Formats -->
+        <div class="formats-section" x-show="result.media.formats && result.media.formats.length > 0">
+          <button class="formats-toggle" @click="showFormats = !showFormats">
+            <span class="arrow" :class="{ open: showFormats }">▶</span>
+            <span x-text="'Available formats (' + (result.media.formats ? result.media.formats.length : 0) + ')'"></span>
+          </button>
+          <template x-if="showFormats">
+            <div class="format-list">
+              <template x-for="f in result.media.formats.slice().reverse()" :key="f.format_id">
+                <div class="format-item">
+                  <div class="format-info">
+                    <div class="res" x-text="f.resolution || (f.width ? f.width + 'x' + f.height : f.ext)"></div>
+                    <div class="meta" x-text="(f.format_id || '') + ' · ' + (f.ext || '') + (fmtBitrate(f.tbr || f.abr) ? ' · ' + fmtBitrate(f.tbr || f.abr) : '') + (fmtSize(f.filesize) ? ' · ' + fmtSize(f.filesize) : '')"></div>
+                  </div>
+                  <a class="format-dl" :href="dlUrl(result.media.webpage_url || result.media.original_url, 'custom', f.format_id)">⬇</a>
+                </div>
+              </template>
+            </div>
+          </template>
+        </div>
+      </div>
+    </template>
+
+    <!-- Empty -->
+    <template x-if="!loading && !result && !error">
+      <div class="empty-state">
+        <div class="icon">📸</div>
+        <h3>Paste an Instagram URL</h3>
+        <p>Supports reels, stories, carousel posts, and video</p>
+      </div>
+    </template>
+
+    <footer class="footer">
+      <p>MediaForge · Built with <a href="https://github.com/yt-dlp/yt-dlp" target="_blank">yt-dlp</a> + FastAPI</p>
+    </footer>
+  </div>
+
+  <script>
+    function instagramPage() {
+      return {
+        url: '',
+        quality: 'best',
+        loading: false,
+        error: null,
+        result: null,
+        showFormats: false,
+        isValidUrl: false,
+
+        validateUrl() {
+          const u = this.url.trim().toLowerCase();
+          this.isValidUrl = /^https?:\/\/(www\.)?instagram\.com\//.test(u);
+        },
+
+        api(path) { return window.location.origin + path; },
+
+        async extract() {
+          if (!this.url.trim()) return;
+          this.validateUrl();
+          if (!this.isValidUrl) {
+            this.error = 'Please enter a valid Instagram URL';
+            return;
+          }
+          this.loading = true;
+          this.error = null;
+          this.result = null;
+          this.showFormats = false;
+          try {
+            const resp = await fetch(this.api('/extract'), {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ url: this.url.trim(), quality: this.quality, media_type: 'all' }),
+            });
+            const data = await resp.json();
+            if (!resp.ok || !data.success) throw new Error(data.detail || data.message || 'Extraction failed');
+            this.result = data;
+          } catch (e) {
+            this.error = e.message || 'Something went wrong';
+          } finally {
+            this.loading = false;
+          }
+        },
+
+        dlUrl(sourceUrl, quality, formatId) {
+          if (!sourceUrl) return '#';
+          let href = this.api(`/dl?url=${encodeURIComponent(sourceUrl)}&quality=${encodeURIComponent(quality || 'best')}`);
+          if (formatId) href += `&format_id=${encodeURIComponent(formatId)}`;
+          return href;
+        },
+
+        fmtNum(n) {
+          if (n == null) return '';
+          if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M';
+          if (n >= 1_000) return (n / 1_000).toFixed(1) + 'K';
+          return n.toLocaleString();
+        },
+
+        fmtSize(bytes) {
+          if (!bytes) return '';
+          if (bytes >= 1_073_741_824) return (bytes / 1_073_741_824).toFixed(1) + ' GB';
+          if (bytes >= 1_048_576) return (bytes / 1_048_576).toFixed(0) + ' MB';
+          if (bytes >= 1024) return (bytes / 1024).toFixed(0) + ' KB';
+          return bytes + ' B';
+        },
+
+        fmtBitrate(kbps) {
+          if (!kbps) return '';
+          if (kbps >= 1000) return (kbps / 1000).toFixed(1) + ' Mbps';
+          return Math.round(kbps) + ' Kbps';
+        },
+
+        copyUrl(url) { navigator.clipboard.writeText(url).catch(() => {}); },
+      };
+    }
+  </script>
+</body>
+</html>

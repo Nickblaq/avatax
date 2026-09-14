@@ -181,6 +181,18 @@ async def serve_ui():
     return FileResponse("static/index.html")
 
 
+@app.get("/twitter", include_in_schema=False)
+async def serve_twitter():
+    """Serve the Twitter/X extraction page."""
+    return FileResponse("static/twitter.html")
+
+
+@app.get("/instagram", include_in_schema=False)
+async def serve_instagram():
+    """Serve the Instagram extraction page."""
+    return FileResponse("static/instagram.html")
+
+
 @app.get("/health", response_model=HealthResponse, tags=["Info"])
 async def health_check():
     """Health check with service info."""
