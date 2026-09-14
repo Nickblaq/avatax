@@ -499,6 +499,11 @@ export default function Home() {
           </a>{" "}
           + FastAPI
         </p>
+        <div className="mt-2 flex justify-center gap-3">
+          <a href="/twitter" className="text-sky-500 hover:underline">
+            🐦 Twitter Extractor
+          </a>
+        </div>
       </footer>
     </div>
   );
