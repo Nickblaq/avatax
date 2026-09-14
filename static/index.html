@@ -3,307 +3,157 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>MediaForge — Media Extractor</title>
+  <title>MediaForge</title>
   <link rel="stylesheet" href="/static/style.css" />
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚡</text></svg>" />
   <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
 </head>
 <body x-data x-init="$store.forge">
-
   <div class="container">
 
-    <!-- ═══ HERO ═══ -->
     <section class="hero">
-      <h1>MediaForge</h1>
-      <p>Extract video, audio, images & metadata from 30+ platforms with a single API call</p>
-      <span class="version-badge" x-text="'yt-dlp ' + ($store.forge._ytVersion || '2026.08.19')"></span>
+      <h1>⚡ MediaForge</h1>
+      <p>Download video, audio & images from 30+ platforms</p>
     </section>
 
-    <!-- ═══ PLATFORM CHIPS ═══ -->
-    <div class="platforms-bar">
-      <span class="chip">YouTube</span>
-      <span class="chip">Twitter/X</span>
-      <span class="chip">Instagram</span>
-      <span class="chip">TikTok</span>
-      <span class="chip">Facebook</span>
-      <span class="chip">Vimeo</span>
-      <span class="chip">Reddit</span>
-      <span class="chip">Twitch</span>
-      <span class="chip">SoundCloud</span>
-      <span class="chip">Dailymotion</span>
-      <span class="chip">Bilibili</span>
-      <span class="chip">+ 18 more</span>
-    </div>
-
-    <!-- ═══ TABS ═══ -->
+    <!-- Tabs -->
     <div class="tabs">
-      <button class="tab-btn"
-        :class="{ active: $store.forge.activeTab === 'single' }"
-        @click="$store.forge.activeTab = 'single'; $store.forge.error = null">
-        ⚡ Single URL
-      </button>
-      <button class="tab-btn"
-        :class="{ active: $store.forge.activeTab === 'batch' }"
-        @click="$store.forge.activeTab = 'batch'; $store.forge.error = null">
-        📦 Batch
-      </button>
-      <button class="tab-btn"
-        :class="{ active: $store.forge.activeTab === 'playlist' }"
-        @click="$store.forge.activeTab = 'playlist'; $store.forge.error = null">
-        📋 Playlist
-      </button>
+      <button class="tab-btn" :class="{ active: $store.forge.activeTab === 'single' }" @click="$store.forge.activeTab = 'single'; $store.forge.error = null">Single</button>
+      <button class="tab-btn" :class="{ active: $store.forge.activeTab === 'batch' }" @click="$store.forge.activeTab = 'batch'; $store.forge.error = null">Batch</button>
+      <button class="tab-btn" :class="{ active: $store.forge.activeTab === 'playlist' }" @click="$store.forge.activeTab = 'playlist'; $store.forge.error = null">Playlist</button>
     </div>
 
-    <!-- ═══ URL INPUT — Single ═══ -->
-    <div class="input-section" x-show="$store.forge.activeTab === 'single'">
+    <!-- Single URL -->
+    <div x-show="$store.forge.activeTab === 'single'">
       <div class="url-input-group">
-        <input type="text"
-          x-model="$store.forge.url"
-          @input.debounce.300ms="$store.forge.detectPlatform()"
-          @keydown.enter="$store.forge.submit()"
-          placeholder="Paste a media URL — YouTube, Instagram, TikTok, Twitter, Reddit, Pornhub…" />
-        <button class="btn-extract"
-          @click="$store.forge.submit()"
-          :disabled="$store.forge.loading || !$store.forge.url.trim()">
-          <template x-if="$store.forge.loading">
-            <span class="spinner"></span>
-          </template>
+        <input type="text" x-model="$store.forge.url" @input.debounce.300ms="$store.forge.detectPlatform()" @keydown.enter="$store.forge.submit()" placeholder="Paste any media URL…" />
+        <button class="btn-extract" @click="$store.forge.submit()" :disabled="$store.forge.loading || !$store.forge.url.trim()">
+          <span class="spinner" x-show="$store.forge.loading"></span>
           <span x-text="$store.forge.loading ? 'Extracting…' : 'Extract'"></span>
         </button>
       </div>
     </div>
 
-    <!-- ═══ BATCH INPUT ═══ -->
-    <div class="input-section batch-input" :class="{ active: $store.forge.activeTab === 'batch' }">
-      <textarea class="batch-textarea"
-        x-model="$store.forge.batchUrls"
-        placeholder="Enter one URL per line (max 20)…&#10;https://youtube.com/watch?v=…&#10;https://instagram.com/reel/…&#10;https://tiktok.com/@user/video/…"></textarea>
-      <div style="display:flex; gap:10px; margin-top:12px; align-items:center">
-        <button class="btn-extract"
-          @click="$store.forge.submit()"
-          :disabled="$store.forge.loading || !$store.forge.batchUrls.trim()">
-          <template x-if="$store.forge.loading">
-            <span class="spinner"></span>
-          </template>
-          <span x-text="$store.forge.loading ? 'Extracting…' : 'Extract All'"></span>
-        </button>
-        <span style="color:var(--text-muted); font-size:0.82rem"
-          x-text="$store.forge.batchUrls.split('\n').filter(u => u.trim()).length + ' URLs'"></span>
-      </div>
+    <!-- Batch -->
+    <div class="batch-input" :class="{ active: $store.forge.activeTab === 'batch' }">
+      <textarea class="batch-textarea" x-model="$store.forge.batchUrls" placeholder="One URL per line (max 20)…"></textarea>
+      <button class="btn-extract" style="margin-top:8px" @click="$store.forge.submit()" :disabled="$store.forge.loading || !$store.forge.batchUrls.trim()">
+        <span class="spinner" x-show="$store.forge.loading"></span>
+        <span x-text="$store.forge.loading ? 'Extracting…' : 'Extract All'"></span>
+      </button>
     </div>
 
-    <!-- ═══ PLAYLIST INPUT ═══ -->
-    <div class="input-section batch-input" :class="{ active: $store.forge.activeTab === 'playlist' }">
+    <!-- Playlist -->
+    <div class="batch-input" :class="{ active: $store.forge.activeTab === 'playlist' }">
       <div class="url-input-group">
-        <input type="text"
-          x-model="$store.forge.url"
-          @keydown.enter="$store.forge.submit()"
-          placeholder="Paste a playlist URL — YouTube playlist, SoundCloud set, etc." />
-        <button class="btn-extract"
-          @click="$store.forge.submit()"
-          :disabled="$store.forge.loading || !$store.forge.url.trim()">
-          <template x-if="$store.forge.loading">
-            <span class="spinner"></span>
-          </template>
+        <input type="text" x-model="$store.forge.url" @keydown.enter="$store.forge.submit()" placeholder="Paste playlist URL…" />
+        <button class="btn-extract" @click="$store.forge.submit()" :disabled="$store.forge.loading || !$store.forge.url.trim()">
+          <span class="spinner" x-show="$store.forge.loading"></span>
           <span x-text="$store.forge.loading ? 'Loading…' : 'Extract Playlist'"></span>
         </button>
       </div>
     </div>
 
-    <!-- ═══ OPTIONS ═══ -->
+    <!-- Options -->
     <div class="options-row">
       <div class="select-wrap">
         <select x-model="$store.forge.quality">
-          <option value="best">🏆 Best Quality</option>
-          <option value="good">👍 Good (720p)</option>
+          <option value="best">🏆 Best</option>
+          <option value="good">👍 720p</option>
           <option value="worst">💾 Smallest</option>
-          <option value="audio_only">🎵 Audio Only</option>
+          <option value="audio_only">🎵 Audio</option>
         </select>
       </div>
       <div class="select-wrap">
         <select x-model="$store.forge.mediaType">
-          <option value="all">📦 All Types</option>
-          <option value="video">🎬 Video Only</option>
-          <option value="audio">🎵 Audio Only</option>
-          <option value="image">🖼️ Images Only</option>
+          <option value="all">All</option>
+          <option value="video">Video</option>
+          <option value="audio">Audio</option>
+          <option value="image">Images</option>
         </select>
       </div>
       <template x-if="$store.forge.detectedPlatform">
-        <span class="meta-tag platform-tag">
-          <span x-text="$store.forge.platformEmoji($store.forge.detectedPlatform)"></span>
-          <span x-text="$store.forge.detectedPlatform"></span>
-        </span>
+        <span class="platform-tag" x-text="$store.forge.platformEmoji($store.forge.detectedPlatform) + ' ' + $store.forge.detectedPlatform"></span>
       </template>
     </div>
 
-    <!-- ═══ ERROR ═══ -->
+    <!-- Error -->
     <template x-if="$store.forge.error">
-      <div class="status-bar error" x-text="'❌ ' + $store.forge.error"></div>
+      <div class="status-bar error" x-text="$store.forge.error"></div>
     </template>
 
-    <!-- ═══ SKELETON LOADING ═══ -->
+    <!-- Loading -->
     <template x-if="$store.forge.loading && !$store.forge.result && !$store.forge.batchResults && !$store.forge.playlistResult">
-      <div class="skeleton skeleton-card"></div>
+      <div style="height:120px;background:var(--bg-input);border-radius:12px;animation:fadeUp 0.3s"></div>
     </template>
 
-    <!-- ═══ SINGLE RESULT ═══ -->
+    <!-- Single Result -->
     <template x-if="$store.forge.result && !$store.forge.error">
       <div class="result-card">
-        <!-- Header -->
         <div class="result-header">
-          <img class="result-thumbnail"
-            :src="$store.forge.result.media.thumbnail || 'data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%22200%22 height=%22120%22%3E%3Crect fill=%22%2316161f%22 width=%22200%22 height=%22120%22/%3E%3Ctext x=%2250%25%22 y=%2250%25%22 fill=%22%23555%22 text-anchor=%22middle%22 dy=%22.3em%22 font-size=%2214%22%3ENo Thumbnail%3C/text%3E%3C/svg%3E'"
-            :alt="$store.forge.result.media.title"
-            @error="$event.target.src='data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%22200%22 height=%22120%22%3E%3Crect fill=%22%2316161f%22 width=%22200%22 height=%22120%22/%3E%3Ctext x=%2250%25%22 y=%2250%25%22 fill=%22%23555%22 text-anchor=%22middle%22 dy=%22.3em%22 font-size=%2214%22%3ENo Thumbnail%3C/text%3E%3C/svg%3E'" />
+          <img class="result-thumbnail" :src="$store.forge.result.media.thumbnail || ''" :alt="$store.forge.result.media.title" @error="$event.target.style.display='none'" />
           <div class="result-meta">
             <h3 x-text="$store.forge.result.media.title || 'Untitled'"></h3>
-            <div style="font-size:0.85rem; color:var(--text-secondary); margin-bottom:4px"
-              x-text="$store.forge.result.media.uploader || $store.forge.result.media.channel || ''"></div>
+            <div class="uploader" x-text="$store.forge.result.media.uploader || $store.forge.result.media.channel || ''"></div>
             <div class="meta-row">
-              <span class="meta-tag platform-tag">
-                <span class="icon" x-text="$store.forge.platformEmoji($store.forge.result.media.platform)"></span>
-                <span x-text="$store.forge.result.media.platform"></span>
-              </span>
-              <span class="meta-tag type-tag">
-                <span x-text="$store.forge.mediaTypeIcon($store.forge.result.media.media_type_detected)"></span>
-                <span x-text="$store.forge.result.media.media_type_detected"></span>
-              </span>
+              <span class="meta-tag" x-text="$store.forge.platformEmoji($store.forge.result.media.platform) + ' ' + $store.forge.result.media.platform"></span>
               <template x-if="$store.forge.result.media.duration_string">
-                <span class="meta-tag">
-                  <span>⏱</span>
-                  <span x-text="$store.forge.result.media.duration_string"></span>
-                </span>
+                <span class="meta-tag" x-text="'⏱ ' + $store.forge.result.media.duration_string"></span>
               </template>
               <template x-if="$store.forge.result.media.view_count != null">
-                <span class="meta-tag">
-                  <span>👁</span>
-                  <span x-text="$store.forge.formatNumber($store.forge.result.media.view_count) + ' views'"></span>
-                </span>
-              </template>
-              <template x-if="$store.forge.result.media.like_count != null">
-                <span class="meta-tag">
-                  <span>❤️</span>
-                  <span x-text="$store.forge.formatNumber($store.forge.result.media.like_count)"></span>
-                </span>
-              </template>
-              <template x-if="$store.forge.result.media.formats">
-                <span class="meta-tag">
-                  <span>🎞</span>
-                  <span x-text="$store.forge.result.media.formats.length + ' formats'"></span>
-                </span>
+                <span class="meta-tag" x-text="$store.forge.formatNumber($store.forge.result.media.view_count) + ' views'"></span>
               </template>
             </div>
           </div>
         </div>
 
-        <!-- Download Buttons — yt-dlp backend download -->
+        <!-- Download -->
         <div class="download-section">
           <template x-if="$store.forge.result.media.webpage_url || $store.forge.result.media.original_url">
-            <a class="btn-download primary"
-              :href="$store.forge.dlUrl($store.forge.result.media.webpage_url || $store.forge.result.media.original_url, $store.forge.quality)"
-              @click="$store.forge.downloading = true; setTimeout(() => { $store.forge.downloading = false }, 8000)">
-              <template x-if="$store.forge.downloading">
-                <span class="spinner" style="width:14px;height:14px;border-width:2px"></span>
-              </template>
-              <span x-text="$store.forge.downloading ? 'Downloading…' : '⬇️ Download'"></span>
-            </a>
+            <a class="btn-download primary" :href="$store.forge.dlUrl($store.forge.result.media.webpage_url || $store.forge.result.media.original_url, $store.forge.quality)">⬇ Download</a>
           </template>
           <template x-if="$store.forge.result.media.webpage_url">
-            <a class="btn-download secondary" :href="$store.forge.result.media.webpage_url" target="_blank" rel="noopener">
-              🔗 Open Original
-            </a>
+            <a class="btn-download secondary" :href="$store.forge.result.media.webpage_url" target="_blank">🔗 Original</a>
           </template>
           <template x-if="$store.forge.result.download_url">
-            <button class="btn-download success" @click="$store.forge.copyUrl($store.forge.result.download_url)">
-              📋 Copy Direct URL
-            </button>
+            <button class="btn-download success" @click="$store.forge.copyUrl($store.forge.result.download_url)">📋 Copy URL</button>
           </template>
         </div>
 
-        <!-- Download progress notice -->
-        <template x-if="$store.forge.downloading">
-          <div class="status-bar loading" style="margin:0 24px 16px">
-            ⏳ Server is downloading via yt-dlp — this may take a moment for large files or HLS streams
-          </div>
-        </template>
-
-        <!-- Formats Table — each row triggers yt-dlp download for that format -->
+        <!-- Formats -->
         <div class="formats-section" x-show="$store.forge.result.media.formats && $store.forge.result.media.formats.length > 0">
           <button class="formats-toggle" @click="$store.forge.showFormats = !$store.forge.showFormats">
             <span class="arrow" :class="{ open: $store.forge.showFormats }">▶</span>
-            <span x-text="'View all formats (' + ($store.forge.result.media.formats ? $store.forge.result.media.formats.length : 0) + ')'"></span>
+            <span x-text="'Available formats (' + ($store.forge.result.media.formats ? $store.forge.result.media.formats.length : 0) + ')'"></span>
           </button>
           <template x-if="$store.forge.showFormats">
-            <table class="formats-table">
-              <thead>
-                <tr>
-                  <th>Type</th>
-                  <th>Format</th>
-                  <th>Ext</th>
-                  <th>Resolution</th>
-                  <th>Bitrate</th>
-                  <th>Size</th>
-                  <th style="text-align:right">Action</th>
-                </tr>
-              </thead>
-              <tbody>
-                <template x-for="f in $store.forge.result.media.formats.slice().reverse()" :key="f.format_id">
-                  <tr class="format-row">
-                    <td>
-                      <span class="fmt-badge" :class="$store.forge.formatType(f)"
-                        x-text="$store.forge.formatTypeLabel(f)"></span>
-                    </td>
-                    <td x-text="f.format_id || '—'"></td>
-                    <td x-text="f.ext || '—'"></td>
-                    <td x-text="f.resolution || (f.width ? f.width + 'x' + f.height : '—')"></td>
-                    <td x-text="$store.forge.formatBitrate(f.tbr || f.abr) || '—'"></td>
-                    <td x-text="$store.forge.formatSize(f.filesize) || '—'"></td>
-                    <td style="text-align:right">
-                      <a class="btn-download primary"
-                        style="padding:5px 12px; font-size:0.78rem"
-                        :href="$store.forge.dlUrl($store.forge.result.media.webpage_url || $store.forge.result.media.original_url, 'custom', f.format_id)">
-                        ⬇️ Download
-                      </a>
-                    </td>
-                  </tr>
-                </template>
-              </tbody>
-            </table>
+            <div class="format-list">
+              <template x-for="f in $store.forge.result.media.formats.slice().reverse()" :key="f.format_id">
+                <div class="format-item">
+                  <div class="format-info">
+                    <div class="res" x-text="f.resolution || (f.width ? f.width + 'x' + f.height : f.ext)"></div>
+                    <div class="meta" x-text="(f.format_id || '') + ' · ' + (f.ext || '') + ($store.forge.formatBitrate(f.tbr || f.abr) ? ' · ' + $store.forge.formatBitrate(f.tbr || f.abr) : '') + ($store.forge.formatSize(f.filesize) ? ' · ' + $store.forge.formatSize(f.filesize) : '')"></div>
+                  </div>
+                  <a class="format-dl" :href="$store.forge.dlUrl($store.forge.result.media.webpage_url || $store.forge.result.media.original_url, 'custom', f.format_id)">⬇</a>
+                </div>
+              </template>
+            </div>
           </template>
         </div>
-
-        <!-- Description -->
-        <template x-if="$store.forge.result.media.description">
-          <div style="padding:0 24px 24px">
-            <details>
-              <summary style="color:var(--text-secondary); font-size:0.85rem; cursor:pointer; padding:8px 0">
-                📝 Description
-              </summary>
-              <p style="font-size:0.82rem; color:var(--text-muted); line-height:1.7; margin-top:8px; white-space:pre-wrap"
-                x-text="$store.forge.result.media.description"></p>
-            </details>
-          </div>
-        </template>
       </div>
     </template>
 
-    <!-- ═══ PLAYLIST RESULT ═══ -->
+    <!-- Playlist -->
     <template x-if="$store.forge.playlistResult && !$store.forge.error">
       <div class="result-card">
         <div class="result-header" style="border-bottom:none">
-          <div class="result-meta" style="min-width:0">
+          <div class="result-meta">
             <h3 x-text="$store.forge.playlistResult.title || 'Playlist'"></h3>
-            <div class="meta-row">
+            <div class="meta-row" style="margin-top:6px">
               <template x-if="$store.forge.playlistResult.uploader">
-                <span class="meta-tag platform-tag">
-                  <span>👤</span>
-                  <span x-text="$store.forge.playlistResult.uploader"></span>
-                </span>
+                <span class="meta-tag" x-text="'👤 ' + $store.forge.playlistResult.uploader"></span>
               </template>
-              <span class="meta-tag type-tag">
-                <span>📋</span>
-                <span x-text="$store.forge.playlistResult.playlist_count + ' items'"></span>
-              </span>
+              <span class="meta-tag" x-text="$store.forge.playlistResult.playlist_count + ' items'"></span>
             </div>
           </div>
         </div>
@@ -311,7 +161,7 @@
           <template x-for="item in $store.forge.playlistResult.items" :key="item.id || item.index">
             <div class="playlist-item" @click="$store.forge.url = item.url; $store.forge.activeTab = 'single'; $store.forge.extract()">
               <span class="idx" x-text="item.index"></span>
-              <span class="title" x-text="item.title || item.id || 'Untitled'"></span>
+              <span class="title" x-text="item.title || item.id"></span>
               <span class="duration" x-text="$store.forge.formatDuration(item.duration)"></span>
             </div>
           </template>
@@ -319,71 +169,43 @@
       </div>
     </template>
 
-    <!-- ═══ BATCH RESULTS ═══ -->
+    <!-- Batch -->
     <template x-if="$store.forge.batchResults && !$store.forge.error">
-      <div class="batch-results">
-        <div class="status-bar"
-          :class="$store.forge.batchResults.failed > 0 ? 'error' : 'success'"
-          x-text="`✅ ${$store.forge.batchResults.successful} successful · ❌ ${$store.forge.batchResults.failed} failed · ${$store.forge.batchResults.total} total`">
-        </div>
+      <div>
+        <div class="status-bar" :class="$store.forge.batchResults.failed > 0 ? 'error' : 'success'" x-text="$store.forge.batchResults.successful + ' OK · ' + $store.forge.batchResults.failed + ' failed'"></div>
         <template x-for="(r, i) in $store.forge.batchResults.results" :key="i">
           <div class="batch-item">
             <div class="batch-item-header">
-              <span class="url" x-text="r.media?.webpage_url || 'Unknown URL'"></span>
-              <span class="meta-tag" :class="r.success ? 'type-tag' : 'meta-tag'"
-                x-text="r.success ? '✅' : '❌'"></span>
+              <span x-text="(r.media?.webpage_url || '').substring(0, 60)"></span>
+              <span x-text="r.success ? '✅' : '❌'"></span>
             </div>
-            <template x-if="r.success">
-              <div class="batch-item-body">
-                <div class="title" x-text="r.media?.title || 'Untitled'"></div>
-                <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:4px">
-                  <span class="meta-tag platform-tag" x-text="$store.forge.platformEmoji(r.media?.platform) + ' ' + (r.media?.platform || '')"></span>
-                  <template x-if="r.media?.duration_string">
-                    <span class="meta-tag" x-text="'⏱ ' + r.media.duration_string"></span>
-                  </template>
-                </div>
-                <template x-if="r.media?.webpage_url || r.media?.original_url">
-                  <a class="download-url"
-                    :href="$store.forge.dlUrl(r.media?.webpage_url || r.media?.original_url, 'best')">⬇️ Download</a>
-                </template>
-              </div>
-            </template>
-            <template x-if="!r.success">
-              <div class="batch-item-body">
-                <div class="batch-error" x-text="r.message || 'Extraction failed'"></div>
-              </div>
-            </template>
-          </div>
-        </template>
-        <template x-if="$store.forge.batchResults.errors && $store.forge.batchResults.errors.length > 0">
-          <div style="margin-top:8px">
-            <template x-for="(err, i) in $store.forge.batchResults.errors" :key="i">
-              <div class="status-bar error" style="margin-bottom:6px">
-                <span x-text="err.url + ': ' + err.error" style="word-break:break-all"></span>
-              </div>
-            </template>
+            <div class="batch-item-body" x-show="r.success">
+              <div class="title" x-text="r.media?.title || 'Untitled'"></div>
+              <template x-if="r.media?.webpage_url">
+                <a class="download-url" :href="$store.forge.dlUrl(r.media?.webpage_url, 'best')">⬇ Download</a>
+              </template>
+            </div>
+            <div class="batch-item-body" x-show="!r.success">
+              <div style="color:var(--danger);font-size:0.82rem" x-text="r.message || 'Failed'"></div>
+            </div>
           </div>
         </template>
       </div>
     </template>
 
-    <!-- ═══ EMPTY STATE ═══ -->
+    <!-- Empty -->
     <template x-if="!$store.forge.loading && !$store.forge.result && !$store.forge.batchResults && !$store.forge.playlistResult && !$store.forge.error">
       <div class="empty-state">
         <div class="icon">⚡</div>
         <h3>Paste a URL to get started</h3>
-        <p>Supports YouTube, Twitter, Instagram, TikTok, Reddit, Vimeo, Pornhub, and 20+ more platforms</p>
+        <p>YouTube, Twitter, Instagram, TikTok, Reddit, Pornhub & more</p>
       </div>
     </template>
 
-    <!-- ═══ FOOTER ═══ -->
     <footer class="footer">
-      <p>MediaForge v1.0.0 · Built with <a href="https://github.com/yt-dlp/yt-dlp" target="_blank">yt-dlp</a> + FastAPI</p>
-      <p style="margin-top:4px">30+ platforms · Video · Audio · Images · Playlists · Batch</p>
+      <p>MediaForge · Built with <a href="https://github.com/yt-dlp/yt-dlp" target="_blank">yt-dlp</a> + FastAPI</p>
     </footer>
-
   </div>
-
   <script src="/static/app.js"></script>
 </body>
 </html>

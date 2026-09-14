@@ -229,16 +229,19 @@ def _ydl_opts_for_download(
         "ignoreerrors": "only_download",
         "no_color": True,
         "geo_bypass": True,
-        "socket_timeout": 60,
-        "retries": 3,
-        "fragment_retries": 3,
+        "socket_timeout": 120,
+        "retries": 5,
+        "fragment_retries": 5,
         "extractor_retries": 3,
         "extractor_args": {
             "youtube": {
                 "player_client": ["web", "web_embedded", "mweb"],
             },
+            "pornhub": {
+                "format": "best",
+            },
         },
-        # Merge video+audio with ffmpeg when needed
+        "age_limit": None,
         "merge_output_format": "mp4",
     }
 

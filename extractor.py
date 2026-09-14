@@ -136,7 +136,11 @@ def _build_ydl_opts(
             "youtube": {
                 "player_client": ["web", "web_embedded", "mweb"],
             },
+            "pornhub": {
+                "format": "best",
+            },
         },
+        "age_limit": None,
     }
 
     if download:
